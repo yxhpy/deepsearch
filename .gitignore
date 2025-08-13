@@ -1,0 +1,6 @@
+__pycache__/*
+
+.env.example
+.env
+output_simple.csv
+output.xlsx

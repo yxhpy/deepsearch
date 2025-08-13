@@ -1,0 +1,62 @@
+providers:
+  search:
+    provider: serper   # 可选: bing | serpapi | brave | serper
+    bing:
+      market: zh-CN
+      freshness: ""   # 可选: Day/Week/Month
+      safeSearch: Moderate
+    serpapi:
+      engine: google   # 也可用 bing, duckduckgo 等
+      location: ""     # 可选
+      num: 10
+    brave:
+      country: CN
+      safesearch: moderate
+    serper:
+      gl: cn          # 地理位置 (country code)
+      hl: zh          # 语言 (language)
+      num: 10         # 每次搜索结果数
+  llm:
+    provider: openai  # 可选: openai | azure | ollama
+    openai:
+      chat_model: gpt-5
+    azure:
+      chat_deployment: gpt-4o-mini
+    ollama:
+      chat_model: qwen2.5:7b
+  embedding:
+    provider: dashscope  # 使用阿里云百炼
+    openai:
+      embed_model: text-embedding-ada-002
+    azure:
+      embed_deployment: text-embedding-3-large
+    ollama:
+      embed_model: nomic-embed-text
+    dashscope:
+      embed_model: text-embedding-v4
+
+runtime:
+  search_concurrency: 20
+  crawl_concurrency: 50
+  per_domain_rps: 1
+  request_timeout_sec: 20
+
+logic:
+  max_queries: 60
+  allowed_operators: ["site", "intitle", "inurl", "filetype", "AND", "OR", "-"]
+  language_priority: zh
+  max_depth: 2
+  max_links_per_page: 30
+  detail_threshold: 0.55   # 摘要判定是否进详情
+  score_threshold: 0.75    # 满足需求阈值
+
+scoring_weights:
+  sim: 0.4
+  kw: 0.2
+  fresh: 0.15
+  domain: 0.15
+  structure: 0.1
+
+export:
+  excel_path: output.xlsx
+  fields: [url,title,snippet,source_query,sim,kw,fresh,domain,structure,score,decision,explanation,http_status,depth,parent,domain_name,lang,render,content_len,hash]
