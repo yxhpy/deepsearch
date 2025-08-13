@@ -41,6 +41,20 @@ runtime:
   per_domain_rps: 1
   request_timeout_sec: 20
 
+crawling:
+  provider: scrapingbee  # 可选: native | scrapingbee | scrapfly | bright_data
+  scrapingbee:
+    render_js: true
+    premium_proxy: false
+    country_code: CN
+  scrapfly:
+    render_js: true
+    proxy_pool: datacenter
+    country: CN
+  bright_data:
+    zone: residential
+    country: CN
+
 logic:
   max_queries: 60
   allowed_operators: ["site", "intitle", "inurl", "filetype", "AND", "OR", "-"]

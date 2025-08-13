@@ -4,6 +4,8 @@
 import asyncio
 import aiohttp
 import re
+import random
+import time
 from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
@@ -53,12 +55,22 @@ class ProcessedContent:
 class ContentCrawler:
     """内容爬虫"""
     
-    def __init__(self, concurrency: int = 50, timeout: int = 20, per_domain_rps: float = 1.0):
+    def __init__(self, concurrency: int = 50, timeout: int = 20, per_domain_rps: float = 1.0, 
+                 crawl_manager=None):
         self.concurrency = concurrency
         self.timeout = timeout
         self.per_domain_rps = per_domain_rps
         self.semaphore = asyncio.Semaphore(concurrency)
         self.domain_last_request = {}  # 域名速率限制
+        self.crawl_manager = crawl_manager  # 外部爬虫提供商
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
         
     async def crawl_urls(self, search_results: List[SearchResult]) -> List[ProcessedContent]:
         """批量抓取URL内容"""
@@ -95,42 +107,167 @@ class ContentCrawler:
         
         self.domain_last_request[domain] = datetime.now().timestamp()
     
-    async def _crawl_single_url(self, search_result: SearchResult) -> Optional[ProcessedContent]:
-        """抓取单个URL"""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-            
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(search_result.url, headers=headers, allow_redirects=True) as response:
-                    content_type = response.headers.get('content-type', '').lower()
-                    
-                    # 只处理HTML内容
-                    if 'html' not in content_type:
-                        return None
-                    
-                    html_content = await response.text()
-                    
-                    # 解析内容
+    async def _crawl_single_url(self, search_result: SearchResult, max_retries: int = 3) -> Optional[ProcessedContent]:
+        """抓取单个URL，带重试和反反爬虫机制"""
+        # 如果有外部爬虫管理器，优先使用
+        if self.crawl_manager:
+            try:
+                html_content = await self.crawl_manager.crawl_url(search_result.url)
+                if html_content:
                     processed = self._parse_html_content(
                         html_content, 
                         search_result,
-                        response.status,
-                        final_url=str(response.url)
+                        200,  # 外部提供商成功时状态码
+                        final_url=search_result.url
                     )
-                    
                     return processed
-                    
-        except Exception as e:
-            print(f"抓取失败 {search_result.url}: {e}")
-            return None
+                else:
+                    print(f"外部爬虫失败，回退到原生爬虫: {search_result.url}")
+            except Exception as e:
+                print(f"外部爬虫错误，回退到原生爬虫: {search_result.url} - {e}")
+        
+        # 原生爬虫逻辑
+        for attempt in range(max_retries):
+            try:
+                # 随机User-Agent和请求头
+                headers = self._get_random_headers(search_result.url)
+                
+                # 随机延迟 (0.5-2.0秒)
+                if attempt > 0:
+                    await asyncio.sleep(random.uniform(0.5, 2.0))
+                
+                timeout = aiohttp.ClientTimeout(total=self.timeout)
+                connector = aiohttp.TCPConnector(
+                    limit=100,
+                    limit_per_host=30,
+                    ttl_dns_cache=300,
+                    use_dns_cache=True,
+                )
+                
+                async with aiohttp.ClientSession(
+                    timeout=timeout, 
+                    connector=connector,
+                    cookie_jar=aiohttp.CookieJar()
+                ) as session:
+                    async with session.get(
+                        search_result.url, 
+                        headers=headers, 
+                        allow_redirects=True,
+                        ssl=False  # 忽略SSL错误
+                    ) as response:
+                        
+                        # 处理常见的反爬虫状态码
+                        if response.status == 429:  # 限流
+                            print(f"限流检测 {search_result.url}, 等待重试...")
+                            await asyncio.sleep(random.uniform(5, 10))
+                            continue
+                        elif response.status == 403:  # 拒绝访问
+                            print(f"访问被拒绝 {search_result.url}, 尝试不同策略...")
+                            continue
+                        elif response.status >= 400:
+                            if attempt == max_retries - 1:
+                                print(f"HTTP错误 {response.status}: {search_result.url}")
+                                return None
+                            continue
+                        
+                        content_type = response.headers.get('content-type', '').lower()
+                        
+                        # 只处理HTML内容
+                        if 'html' not in content_type:
+                            return None
+                        
+                        html_content = await response.text()
+                        
+                        # 检查是否是验证码页面或反爬虫页面
+                        if self._is_anti_bot_page(html_content):
+                            print(f"检测到反爬虫页面 {search_result.url}, 跳过")
+                            return None
+                        
+                        # 解析内容
+                        processed = self._parse_html_content(
+                            html_content, 
+                            search_result,
+                            response.status,
+                            final_url=str(response.url)
+                        )
+                        
+                        return processed
+                        
+            except asyncio.TimeoutError:
+                print(f"超时 {search_result.url} (尝试 {attempt + 1}/{max_retries})")
+                continue
+            except aiohttp.ClientError as e:
+                print(f"网络错误 {search_result.url}: {e} (尝试 {attempt + 1}/{max_retries})")
+                continue
+            except Exception as e:
+                print(f"抓取失败 {search_result.url}: {e} (尝试 {attempt + 1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    return None
+                continue
+        
+        return None
+    
+    def _get_random_headers(self, url: str) -> Dict[str, str]:
+        """生成随机请求头"""
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        
+        headers = {
+            'User-Agent': random.choice(self.user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+            'Accept-Language': random.choice([
+                'zh-CN,zh;q=0.9,en;q=0.8',
+                'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+                'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2'
+            ]),
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0',
+        }
+        
+        # 添加Referer (模拟从搜索引擎来)
+        referers = [
+            'https://www.google.com/',
+            'https://www.bing.com/',
+            'https://www.baidu.com/',
+            f'https://www.google.com/search?q={domain}'
+        ]
+        headers['Referer'] = random.choice(referers)
+        
+        # 随机添加一些可选头部
+        if random.random() < 0.3:
+            headers['DNT'] = '1'
+        if random.random() < 0.5:
+            headers['Sec-GPC'] = '1'
+        
+        return headers
+    
+    def _is_anti_bot_page(self, html_content: str) -> bool:
+        """检测是否是反爬虫页面"""
+        html_lower = html_content.lower()
+        
+        # 常见反爬虫关键词
+        anti_bot_keywords = [
+            'captcha', 'recaptcha', 'hcaptcha',
+            'cloudflare', 'please wait', 'checking your browser',
+            'access denied', 'blocked', 'robot', 'bot detection',
+            'verify you are human', '验证码', '机器人', '访问被拒绝',
+            'just a moment', 'ddos protection', 'security check'
+        ]
+        
+        for keyword in anti_bot_keywords:
+            if keyword in html_lower:
+                return True
+        
+        # 检查页面长度 - 反爬虫页面通常很短
+        if len(html_content.strip()) < 500:
+            return True
+        
+        return False
     
     def _parse_html_content(self, html: str, search_result: SearchResult, status_code: int, final_url: str) -> ProcessedContent:
         """解析HTML内容"""

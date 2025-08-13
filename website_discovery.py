@@ -10,6 +10,7 @@ from config_manager import ConfigManager
 from unified_query_chain import create_unified_query_chain, QueryResult
 from search_providers import create_search_provider, ConcurrentSearchManager
 from content_processor import ContentCrawler, ContentScorer, ProcessedContent
+from crawling_providers import EnhancedCrawlManager
 from excel_exporter import ExcelExporter
 
 
@@ -38,10 +39,18 @@ class WebsiteDiscoveryEngine:
             self.runtime_config.get('search_concurrency', 20)
         )
         
+        # 初始化爬虫管理器
+        try:
+            self.crawl_manager = EnhancedCrawlManager(self.config_manager.config)
+        except Exception as e:
+            print(f"初始化外部爬虫失败，使用原生爬虫: {e}")
+            self.crawl_manager = None
+        
         self.crawler = ContentCrawler(
             concurrency=self.runtime_config.get('crawl_concurrency', 50),
             timeout=self.runtime_config.get('request_timeout_sec', 20),
-            per_domain_rps=self.runtime_config.get('per_domain_rps', 1.0)
+            per_domain_rps=self.runtime_config.get('per_domain_rps', 1.0),
+            crawl_manager=self.crawl_manager
         )
         
         self.scorer = ContentScorer(self.embeddings, self.scoring_weights)
