@@ -8,7 +8,7 @@
 - **🌐 多搜索引擎**: 支持 Bing、SerpAPI、Brave 等多个搜索提供商
 - **🤖 多LLM支持**: 支持 OpenAI、Azure OpenAI、Ollama 等多种LLM提供商
 - **📊 智能评分**: 基于相似度、关键词匹配、新鲜度、域名可信度等多维度评分
-- **🕷️ 高效抓取**: 并发内容抓取，支持速率限制和错误处理
+- **🕷️ 高效抓取**: 并发内容抓取，支持多种抓取提供商和反机器人检测
 - **🔗 下钻分析**: 自动分析相关链接，扩展发现范围
 - **📋 Excel导出**: 生成详细的分析报告，包含评分解释和元数据
 
@@ -41,6 +41,12 @@ OPENAI_API_KEY=your_openai_api_key
 # 或
 AZURE_OPENAI_API_KEY=your_azure_key
 AZURE_OPENAI_ENDPOINT=your_azure_endpoint
+
+# 反机器人抓取服务（可选）
+SCRAPINGBEE_API_KEY=your_scrapingbee_key
+SCRAPFLY_API_KEY=your_scrapfly_key
+BRIGHT_DATA_USERNAME=your_bright_data_username
+BRIGHT_DATA_PASSWORD=your_bright_data_password
 ```
 
 ### 3. 基础使用
@@ -68,6 +74,9 @@ providers:
     provider: openai  # LLM提供商：openai | azure | ollama
   embedding:
     provider: openai  # 嵌入模型提供商
+
+crawling:
+  provider: native  # 抓取提供商：native | scrapingbee | scrapfly | bright_data
 
 logic:
   max_queries: 60  # 最大生成查询数
@@ -101,6 +110,7 @@ scoring_weights:  # 评分权重
 - `unified_query_chain.py`: 统一查询生成链
 - `search_providers.py`: 多搜索引擎适配器
 - `content_processor.py`: 内容抓取和评分
+- `crawling_providers.py`: 多抓取提供商适配器（支持反机器人检测）
 - `excel_exporter.py`: Excel报告导出
 - `config_manager.py`: 配置管理
 - `main.py`: CLI入口程序
@@ -161,6 +171,10 @@ providers:
     provider: ollama  # 切换到本地Ollama
     ollama:
       chat_model: qwen2.5:7b
+
+crawling:
+  provider: scrapingbee  # 切换到ScrapingBee（支持反机器人）
+  # 或使用其他提供商：scrapfly | bright_data | native
 ```
 
 ### 性能优化
@@ -205,7 +219,13 @@ scoring_weights:
    ```
    ❌ 内容抓取失败，无有效内容
    ```
-   解决：检查目标网站是否可访问，调整请求超时设置
+   解决：检查目标网站是否可访问，尝试切换抓取提供商（如使用 ScrapingBee 或 Scrapfly）
+
+4. **遇到反机器人检测**
+   ```
+   ❌ 检测到可能的反机器人机制
+   ```
+   解决：在 `config.yaml` 中将抓取提供商切换为 `scrapingbee`、`scrapfly` 或 `bright_data`
 
 ### 调试模式
 
