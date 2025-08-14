@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from search_providers import SearchResult
 from content_processor import ProcessedContent
 import json
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 @dataclass
@@ -228,6 +229,81 @@ class BrightDataCrawlProvider(BaseCrawlProvider):
             )
 
 
+class PlaywrightCrawlProvider(BaseCrawlProvider):
+    """Playwright爬虫提供商 - 用于兜底处理复杂页面"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.timeout = config.get('timeout', 30000)  # 30秒超时
+        self.headless = config.get('headless', True)
+        self.wait_for_load = config.get('wait_for_load', True)
+        self.wait_time = config.get('wait_time', 2000)  # 等待2秒让页面加载
+        self.user_agent = config.get('user_agent', 
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+    
+    async def fetch_url(self, url: str, headers: Optional[Dict[str, str]] = None) -> CrawlResult:
+        """使用Playwright获取内容"""
+        try:
+            async with async_playwright() as p:
+                # 启动浏览器
+                browser = await p.chromium.launch(
+                    headless=self.headless,
+                    args=['--no-sandbox', '--disable-dev-shm-usage']
+                )
+                
+                try:
+                    # 创建带用户代理的浏览器上下文
+                    context = await browser.new_context(user_agent=self.user_agent)
+                    
+                    # 创建页面
+                    page = await context.new_page()
+                    
+                    # 设置额外headers
+                    if headers:
+                        await page.set_extra_http_headers(headers)
+                    
+                    # 设置视口大小
+                    await page.set_viewport_size({"width": 1920, "height": 1080})
+                    
+                    # 导航到页面
+                    response = await page.goto(
+                        url, 
+                        timeout=self.timeout,
+                        wait_until='domcontentloaded'
+                    )
+                    
+                    # 等待页面加载
+                    if self.wait_for_load:
+                        await asyncio.sleep(self.wait_time / 1000)
+                    
+                    # 获取页面内容
+                    html = await page.content()
+                    final_url = page.url
+                    status_code = response.status if response else 200
+                    
+                    return CrawlResult(
+                        url=url,
+                        html=html,
+                        status_code=status_code,
+                        final_url=final_url,
+                        success=status_code < 400
+                    )
+                    
+                finally:
+                    await browser.close()
+                    
+        except PlaywrightTimeoutError:
+            return CrawlResult(
+                url=url, html="", status_code=0, final_url=url,
+                success=False, error="Playwright超时"
+            )
+        except Exception as e:
+            return CrawlResult(
+                url=url, html="", status_code=0, final_url=url,
+                success=False, error=f"Playwright错误: {e}"
+            )
+
+
 class CrawlProviderFactory:
     """爬虫提供商工厂"""
     
@@ -242,6 +318,8 @@ class CrawlProviderFactory:
             return ScrapflyCrawlProvider(config)
         elif provider_type == 'bright_data':
             return BrightDataCrawlProvider(config)
+        elif provider_type == 'playwright':
+            return PlaywrightCrawlProvider(config)
         else:
             raise ValueError(f"不支持的爬虫提供商: {provider_type}")
 

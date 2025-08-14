@@ -42,7 +42,7 @@ runtime:
   request_timeout_sec: 20
 
 crawling:
-  provider: scrapingbee  # 可选: native | scrapingbee | scrapfly | bright_data
+  provider: playwright  # 可选: native | scrapingbee | scrapfly | bright_data | playwright
   scrapingbee:
     render_js: true
     premium_proxy: false
@@ -54,6 +54,12 @@ crawling:
   bright_data:
     zone: residential
     country: CN
+  playwright:
+    headless: true           # 是否无头模式运行
+    timeout: 30000          # 页面加载超时时间(毫秒)
+    wait_for_load: true     # 是否等待页面完全加载
+    wait_time: 2000         # 页面加载等待时间(毫秒)
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 logic:
   max_queries: 60
@@ -61,8 +67,8 @@ logic:
   language_priority: zh
   max_depth: 2
   max_links_per_page: 30
-  detail_threshold: 0.55   # 摘要判定是否进详情
-  score_threshold: 0.75    # 满足需求阈值
+  detail_threshold: 0.80   # 摘要判定是否进详情
+  score_threshold: 0.90    # 满足需求阈值
 
 scoring_weights:
   sim: 0.4
